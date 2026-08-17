@@ -1,18 +1,20 @@
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
 import os
 import threading
 import time
 from datetime import datetime
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 import numpy as np
 import pandas as pd
 import pytz
 import requests
 import yfinance as yf
 
+# Cloud Environment Variables
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
-
 
 def send_telegram_message(msg, target_chat_id=None):
   cid = target_chat_id if target_chat_id else CHAT_ID
@@ -21,7 +23,7 @@ def send_telegram_message(msg, target_chat_id=None):
   try:
     requests.post(url, json=payload, timeout=10)
   except Exception as e:
-    print("Telegram error:", e)
+    print("Telegram send error:", e)
 
 
 def fetch_index_data(ticker_symbol):
@@ -159,58 +161,110 @@ def execute_scan():
       print(f"Error scanning {name}:", e)
 
 
-# Direct HTTP Polling for Telegram Commands
+def query_openrouter_ai(user_question, market_context):
+  url = "https://openrouter.ai/api/v1/chat/completions"
+  headers = {
+      "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://render.com",
+      "X-Title": "Partha Algo VIP Bot",
+  }
+
+  system_prompt = (
+      "You are the Partha Algo Edge VIP AI Analyst. You provide precise, professional, "
+      "and sharp trading insights for Indian Stock Market indices (NIFTY 50, BANKNIFTY). "
+      "Always reference technical indicators (5/39 EMA, ATR trailing stops, 8-tick breakout) "
+      "and emphasize strict risk management. Keep responses concise and formatted with bullet points."
+  )
+
+  prompt = (
+      f"LIVE MARKET CONTEXT:\n{market_context}\n\nUSER QUESTION: {user_question}"
+  )
+
+  payload = {
+      "model": "openai/gpt-oss-20b:free",
+      "messages": [
+          {"role": "system", "content": system_prompt},
+          {"role": "user", "content": prompt},
+      ],
+  }
+
+  try:
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
+    if response.status_code == 200:
+      return response.json()["choices"][0]["message"]["content"]
+    else:
+      return (
+          f"⚠️ AI Engine Error ({response.status_code}): {response.text[:120]}"
+      )
+  except Exception as e:
+    return f"⚠️ Connection Error: {str(e)}"
+
+
+# Handles both private DMs and channel posts
 def telegram_listener():
   offset = None
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-  print("Direct Telegram command listener active...")
+  print("Telegram command & channel update listener active...")
 
   while True:
     try:
-      params = {"timeout": 20, "offset": offset}
+      params = {
+          "timeout": 20,
+          "offset": offset,
+          "allowed_updates": ["message", "channel_post"],
+      }
       res = requests.get(url, params=params, timeout=25).json()
 
       if "result" in res:
         for update in res["result"]:
           offset = update["update_id"] + 1
 
-          if "message" in update and "text" in update["message"]:
-            user_msg = update["message"]["text"].strip()
-            sender_id = update["message"]["chat"]["id"]
+          # Intercept private message OR channel broadcast
+          msg_obj = update.get("message") or update.get("channel_post")
+          if not msg_obj or "text" not in msg_obj:
+            continue
 
-            if user_msg.startswith("/ask_bot") or user_msg.startswith("/start"):
-              query = (
-                  user_msg.replace("/ask_bot", "").replace("/start", "").strip()
+          user_msg = msg_obj["text"].strip()
+          sender_id = msg_obj["chat"]["id"]
+
+          if user_msg.startswith("/ask_bot") or user_msg.startswith("/start"):
+            query = (
+                user_msg.replace("/ask_bot", "").replace("/start", "").strip()
+            )
+
+            if not query:
+              send_telegram_message(
+                  "👋 *Partha Algo AI Engine Active*\n"
+                  "Ask any question regarding market trends, levels, or indicator concepts.\n\n"
+                  "Example: `/ask_bot what is the current trend and setup for NIFTY?`",
+                  target_chat_id=sender_id,
+              )
+              continue
+
+            # Fetch live market snapshot for prompt grounding
+            try:
+              df = calculate_partha_signals(fetch_index_data("^NSEI"))
+              latest = df.iloc[-1]
+              trend = "BULLISH" if latest["Position"] == 1 else "BEARISH"
+              sl = (
+                  latest["Long_Stop"]
+                  if trend == "BULLISH"
+                  else latest["Short_Stop"]
+              )
+              market_snapshot = (
+                  f"NIFTY 50 Spot: {latest['Close']:.2f} | Trend: {trend} | "
+                  f"5 EMA: {latest['EMA_5']:.2f} | 39 EMA: {latest['EMA_39']:.2f} | Trailing SL: {sl:.2f}"
+              )
+            except Exception:
+              market_snapshot = (
+                  "NIFTY 50 live data currently offline / outside session hours."
               )
 
-              if not query:
-                reply = (
-                    "👋 *Partha Algo AI Ready!*\n"
-                    "Ask any question about current trends, prices, or levels.\n\n"
-                    "Example: `/ask_bot what is the current trend of NIFTY?`"
-                )
-              else:
-                try:
-                  df = calculate_partha_signals(fetch_index_data("^NSEI"))
-                  latest = df.iloc[-1]
-                  trend = "BULLISH" if latest["Position"] == 1 else "BEARISH"
-                  reply = (
-                      f"🤖 *AI Market Assistant:*\n"
-                      f"• *Asset:* NIFTY 50\n"
-                      f"• *Price:* `{latest['Close']:.2f}`\n"
-                      f"• *Algo Trend:* *{trend}*\n"
-                      f"• *5 EMA / 39 EMA:* `{latest['EMA_5']:.2f}` /"
-                      f" `{latest['EMA_39']:.2f}`\n"
-                      f"• *Active Trailing SL:*"
-                      f" `{latest['Long_Stop'] if trend=='BULLISH' else latest['Short_Stop']:.2f}`\n\n"
-                      f"Analysis for: *\"{query}\"*"
-                  )
-                except Exception:
-                  reply = (
-                      "🤖 *AI Assistant:* Market data currently unavailable."
-                  )
+            ai_response = query_openrouter_ai(query, market_snapshot)
+            formatted_reply = f"🤖 *PARTHA AI INTEL*\n━━━━━━━━━━━━━━━━━━━\n{ai_response}"
+            send_telegram_message(formatted_reply, target_chat_id=sender_id)
 
-              send_telegram_message(reply, target_chat_id=sender_id)
     except Exception as e:
       time.sleep(2)
 
