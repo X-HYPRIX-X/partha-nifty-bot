@@ -9,6 +9,7 @@ import pytz
 import requests
 import yfinance as yf
 
+# Environment variables pulled from Render
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 PORT = int(os.environ.get("PORT", 8080))
@@ -143,7 +144,7 @@ def execute_scan():
       else "NEUTRAL"
   )
 
-  # Movement update
+  # 5-Minute Movement Update
   movement_msg = (
       f"📊 *MOVEMENT DETECTED - NIFTY 50*\n"
       f"Current Price: `{latest['Close']:.2f}` ({change_direction}"
@@ -153,7 +154,7 @@ def execute_scan():
   )
   send_telegram_message(movement_msg)
 
-  # Signal alerts
+  # Priority Signals
   if latest["Buy_Signal"]:
     msg = (
         f"🟢 *PARTHA OSC: BUY SIGNAL*\nTicker: NIFTY 50\nPrice:"
@@ -180,21 +181,69 @@ def execute_scan():
     send_telegram_message(msg)
 
 
+def send_market_close_summary():
+  try:
+    live_data = fetch_nifty_data()
+    processed_data = calculate_partha_signals(live_data)
+
+    # Filter today's bars using timezone conversion
+    ist = pytz.timezone("Asia/Kolkata")
+    today_date = datetime.now(ist).date()
+    today_data = processed_data[processed_data.index.date == today_date]
+
+    if today_data.empty:
+      today_data = processed_data.tail(75)  # Fallback to standard session bars
+
+    day_open = today_data.iloc[0]["Open"]
+    day_high = today_data["High"].max()
+    day_low = today_data["Low"].min()
+    day_close = today_data.iloc[-1]["Close"]
+
+    net_points = day_close - day_open
+    pct_change = (net_points / day_open) * 100
+    arrow = "📈" if net_points >= 0 else "📉"
+    final_trend = (
+        "BULLISH"
+        if today_data.iloc[-1]["Position"] == 1
+        else "BEARISH"
+        if today_data.iloc[-1]["Position"] == -1
+        else "NEUTRAL"
+    )
+
+    summary_msg = (
+        f"🏁 *DAILY MARKET CLOSE SUMMARY - NIFTY 50*\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"{arrow} *Closing Price:* `{day_close:.2f}` ({net_points:+.2f} /"
+        f" {pct_change:+.2f}%)\n"
+        f"• *Open:* `{day_open:.2f}`\n"
+        f"• *Day High:* `{day_high:.2f}`\n"
+        f"• *Day Low:* `{day_low:.2f}`\n"
+        f"• *Total Range:* `{day_high - day_low:.2f}` pts\n"
+        f"• *Final Algo Position:* *{final_trend}*\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"Market closed. Automated engine standing by until 09:15 AM tomorrow."
+    )
+    send_telegram_message(summary_msg)
+    print("Market close summary sent.")
+  except Exception as e:
+    print("Failed to generate market summary:", e)
+
+
 def algo_loop():
   ist = pytz.timezone("Asia/Kolkata")
   print("Market scanning loop started...")
 
-  # Instant ping upon cloud boot
-  send_telegram_message(
-      "🚀 *RENDER CLOUD WORKER LIVE*\nPartha Algo engine connected and"
-      " scanning active."
-  )
+  summary_sent_today = False
 
   while True:
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5
     market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
     market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    # Reset summary flag before next session
+    if now.hour == 8:
+      summary_sent_today = False
 
     if is_weekday and (market_open <= now <= market_close):
       print(f"[SCAN] Running at {now.strftime('%I:%M:%S %p')} IST")
@@ -204,10 +253,11 @@ def algo_loop():
         print("Scan error:", e)
       time.sleep(300)
     else:
-      print(
-          f"[STANDBY] Outside market hours ({now.strftime('%I:%M:%S %p')})."
-          " Waiting 60s..."
-      )
+      # Send close summary once at 3:30 PM IST
+      if is_weekday and now >= market_close and not summary_sent_today:
+        send_market_close_summary()
+        summary_sent_today = True
+
       time.sleep(60)
 
 
