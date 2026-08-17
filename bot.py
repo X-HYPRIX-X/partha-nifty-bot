@@ -1,8 +1,9 @@
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
 import os
 import threading
 import time
 from datetime import datetime
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 import numpy as np
 import pandas as pd
 import pytz
@@ -213,7 +214,7 @@ def query_groq_ai(user_question, market_context):
   api_key = (os.environ.get("GROQ_API_KEY") or "").strip()
 
   if not api_key:
-    return "⚠️ Error: GROQ_API_KEY is not configured in Render environment variables."
+    return "⚠️ Error: GROQ_API_KEY is not set in Render Environment variables."
 
   url = "https://api.groq.com/openai/v1/chat/completions"
   headers = {
@@ -279,7 +280,7 @@ def telegram_listener():
           user_msg = msg_obj["text"].strip()
           sender_id = msg_obj["chat"]["id"]
 
-          # Matches /ask_bot, ask_bot, or /start
+          # Supports /ask_bot, ask_bot, and /start
           if (
               user_msg.startswith("/ask_bot")
               or user_msg.startswith("ask_bot")
@@ -301,7 +302,6 @@ def telegram_listener():
               )
               continue
 
-            # Grounding context from live NIFTY tick
             try:
               df = calculate_partha_signals(fetch_index_data("^NSEI"))
               latest = df.iloc[-1]
