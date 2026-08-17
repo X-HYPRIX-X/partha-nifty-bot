@@ -1,4 +1,6 @@
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 import os
+import threading
 import time
 from datetime import datetime
 import numpy as np
@@ -7,9 +9,10 @@ import pytz
 import requests
 import yfinance as yf
 
-# Environment variables pulled from cloud settings
+# Environment variables pulled from Render
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
+PORT = int(os.environ.get("PORT", 8080))
 
 
 def send_telegram_message(msg):
@@ -141,7 +144,7 @@ def execute_scan():
       else "NEUTRAL"
   )
 
-  # 1. 5-Minute Movement Update
+  # Movement update
   movement_msg = (
       f"📊 *MOVEMENT DETECTED - NIFTY 50*\n"
       f"Current Price: `{latest['Close']:.2f}` ({change_direction}"
@@ -151,7 +154,7 @@ def execute_scan():
   )
   send_telegram_message(movement_msg)
 
-  # 2. Priority Signals
+  # Signal alerts
   if latest["Buy_Signal"]:
     msg = (
         f"🟢 *PARTHA OSC: BUY SIGNAL*\nTicker: NIFTY 50\nPrice:"
@@ -178,9 +181,9 @@ def execute_scan():
     send_telegram_message(msg)
 
 
-if __name__ == "__main__":
+def algo_loop():
   ist = pytz.timezone("Asia/Kolkata")
-  print("Cloud engine online. Running continuous market watcher...")
+  print("Market scanning loop started...")
 
   while True:
     now = datetime.now(ist)
@@ -196,10 +199,15 @@ if __name__ == "__main__":
         print("Scan error:", e)
       time.sleep(300)
     else:
-      print(
-          f"\r[STANDBY] Market Closed ({now.strftime('%I:%M:%S %p')}). Sleeping"
-          " 60s...",
-          end="",
-          flush=True,
-      )
       time.sleep(60)
+
+
+if __name__ == "__main__":
+  # Start the background trading loop
+  trading_thread = threading.Thread(target=algo_loop, daemon=True)
+  trading_thread.start()
+
+  # Serve HTTP so Render recognizes the service as live
+  server = HTTPServer(("0.0.0.0", PORT), SimpleHTTPRequestHandler)
+  print(f"Web server running on port {PORT}...")
+  server.serve_forever()
