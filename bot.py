@@ -104,24 +104,35 @@ def calculate_partha_signals(df):
     return df
 
 if __name__ == "__main__":
-    print("Running single market scan...")
+    print("Running market scan...")
     live_data = fetch_nifty_data()
     processed_data = calculate_partha_signals(live_data)
     latest = processed_data.iloc[-1]
+    prev = processed_data.iloc[-2]
     
-    print(f"Current NIFTY 50 Price: {latest['Close']:.2f}")
+    price_change = latest['Close'] - prev['Close']
+    change_direction = "▲" if price_change >= 0 else "▼"
+    trend_status = "BULLISH (LONG)" if latest['Position'] == 1 else "BEARISH (SHORT)" if latest['Position'] == -1 else "NEUTRAL"
     
+    # 1. 5-Minute Movement Status Update
+    movement_msg = (
+        f"📊 *MOVEMENT DETECTED - NIFTY 50*\n"
+        f"Current Price: `{latest['Close']:.2f}` ({change_direction} {abs(price_change):.2f})\n"
+        f"High: `{latest['High']:.2f}` | Low: `{latest['Low']:.2f}`\n"
+        f"Algo Trend: *{trend_status}*"
+    )
+    send_telegram_message(movement_msg)
+    
+    # 2. Priority Signal Alerts
     if latest['Buy_Signal']:
-        msg = f"🟢 *PARTHA OSC: BUY SIGNAL*\nTicker: NIFTY 50\nPrice: {latest['Close']:.2f}\nStop Loss: {latest['Long_Stop']:.2f}"
+        msg = f"🟢 *PARTHA OSC: BUY SIGNAL*\nTicker: NIFTY 50\nPrice: `{latest['Close']:.2f}`\nStop Loss: `{latest['Long_Stop']:.2f}`"
         send_telegram_message(msg)
     elif latest['Sell_Signal']:
-        msg = f"🔴 *PARTHA OSC: SELL SIGNAL*\nTicker: NIFTY 50\nPrice: {latest['Close']:.2f}\nStop Loss: {latest['Short_Stop']:.2f}"
+        msg = f"🔴 *PARTHA OSC: SELL SIGNAL*\nTicker: NIFTY 50\nPrice: `{latest['Close']:.2f}`\nStop Loss: `{latest['Short_Stop']:.2f}`"
         send_telegram_message(msg)
     elif latest['Bull_Cross']:
-        msg = f"⚡ *EMA BULLISH CROSS (5/39)*\nTicker: NIFTY 50\nPrice: {latest['Close']:.2f}"
+        msg = f"⚡ *EMA BULLISH CROSS (5/39)*\nTicker: NIFTY 50\nPrice: `{latest['Close']:.2f}`"
         send_telegram_message(msg)
     elif latest['Bear_Cross']:
-        msg = f"⚠️ *EMA BEARISH CROSS (5/39)*\nTicker: NIFTY 50\nPrice: {latest['Close']:.2f}"
+        msg = f"⚠️ *EMA BEARISH CROSS (5/39)*\nTicker: NIFTY 50\nPrice: `{latest['Close']:.2f}`"
         send_telegram_message(msg)
-    else:
-        print("No active market signals.")
