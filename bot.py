@@ -3,7 +3,6 @@ import threading
 import time
 from datetime import datetime
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-import json
 import numpy as np
 import pandas as pd
 import pytz
@@ -13,7 +12,7 @@ import yfinance as yf
 # Cloud Environment Variables
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
 
 
@@ -209,60 +208,56 @@ def send_market_close_summary():
     print("Failed to generate market summary:", e)
 
 
-# --- OPENROUTER AI ENGINE ---
-def query_openrouter_ai(user_question, market_context):
-  api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+# --- GROQ AI ENGINE ---
+def query_groq_ai(user_question, market_context):
+  api_key = (os.environ.get("GROQ_API_KEY") or "").strip()
 
   if not api_key:
-    return "⚠️ Error: OPENROUTER_API_KEY is missing from Render environment variables."
+    return "⚠️ Error: GROQ_API_KEY is not configured in Render environment variables."
 
-  url = "https://openrouter.ai/api/v1/chat/completions"
+  url = "https://api.groq.com/openai/v1/chat/completions"
   headers = {
       "Authorization": f"Bearer {api_key}",
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://partha-nifty-bot.onrender.com",
-      "X-Title": "Partha Algo VIP Bot",
   }
 
   system_prompt = (
-      "You are the Partha Algo Edge VIP AI Analyst. You provide precise, professional, "
-      "and sharp trading insights for Indian Stock Market indices (NIFTY 50, BANKNIFTY). "
-      "Always reference technical indicators (5/39 EMA, ATR trailing stops, 8-tick breakout) "
-      "and emphasize strict risk management. Keep responses concise and formatted with bullet points."
+      "You are the Partha Algo Edge VIP AI Analyst. Provide precise, professional, "
+      "and sharp trading insights for Indian indices (NIFTY 50, BANKNIFTY) based on 5/39 EMA, "
+      "ATR trailing stops, and 8-tick breakout levels. Format responses with clean bullet points."
   )
 
   payload = {
-      "model": "openai/gpt-oss-20b:free",
+      "model": "llama-3.3-70b-versatile",
       "messages": [
           {"role": "system", "content": system_prompt},
           {
               "role": "user",
               "content": (
-                  f"MARKET CONTEXT:\n{market_context}\n\nQUESTION:"
+                  f"LIVE MARKET CONTEXT:\n{market_context}\n\nUSER QUESTION:"
                   f" {user_question}"
               ),
           },
       ],
+      "temperature": 0.3,
   }
 
   try:
-    response = requests.post(url, headers=headers, json=payload, timeout=25)
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
     data = response.json()
     if response.status_code == 200 and "choices" in data:
       return data["choices"][0]["message"]["content"]
     else:
-      return (
-          f"⚠️ AI Engine Error ({response.status_code}): {response.text[:140]}"
-      )
+      return f"⚠️ Groq Error ({response.status_code}): {response.text[:140]}"
   except Exception as e:
     return f"⚠️ Request Error: {str(e)}"
 
 
-# --- COMMAND LISTENER (DMs & CHANNELS) ---
+# --- TELEGRAM COMMAND LISTENER (DMs & CHANNELS) ---
 def telegram_listener():
   offset = None
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-  print("Telegram listener initialized...")
+  print("Telegram Groq AI listener active...")
 
   while True:
     try:
@@ -284,20 +279,29 @@ def telegram_listener():
           user_msg = msg_obj["text"].strip()
           sender_id = msg_obj["chat"]["id"]
 
-          if user_msg.startswith("/ask_bot") or user_msg.startswith("/start"):
+          # Matches /ask_bot, ask_bot, or /start
+          if (
+              user_msg.startswith("/ask_bot")
+              or user_msg.startswith("ask_bot")
+              or user_msg.startswith("/start")
+          ):
             query = (
-                user_msg.replace("/ask_bot", "").replace("/start", "").strip()
+                user_msg.replace("/ask_bot", "")
+                .replace("ask_bot", "")
+                .replace("/start", "")
+                .strip()
             )
 
             if not query:
               send_telegram_message(
-                  "👋 *Partha Algo AI Ready!*\n"
-                  "Ask any market query or technical setup question.\n\n"
+                  "👋 *Partha Algo AI Ready (Powered by Groq Llama 3.3)*\n"
+                  "Ask any market query, trend question, or level analysis.\n\n"
                   "Example: `/ask_bot what is the current trend of NIFTY?`",
                   target_chat_id=sender_id,
               )
               continue
 
+            # Grounding context from live NIFTY tick
             try:
               df = calculate_partha_signals(fetch_index_data("^NSEI"))
               latest = df.iloc[-1]
@@ -316,15 +320,15 @@ def telegram_listener():
                   "NIFTY 50 live data currently offline / outside session hours."
               )
 
-            ai_response = query_openrouter_ai(query, market_snapshot)
-            formatted_reply = f"🤖 *PARTHA AI INTEL*\n━━━━━━━━━━━━━━━━━━━\n{ai_response}"
+            ai_response = query_groq_ai(query, market_snapshot)
+            formatted_reply = f"🤖 *PARTHA AI INTEL (GROQ)*\n━━━━━━━━━━━━━━━━━━━\n{ai_response}"
             send_telegram_message(formatted_reply, target_chat_id=sender_id)
 
     except Exception as e:
       time.sleep(2)
 
 
-# --- 24/7 BACKGROUND WORKER LOOP ---
+# --- 24/7 BACKGROUND WORKER ---
 def algo_loop():
   ist = pytz.timezone("Asia/Kolkata")
   summary_sent_today = False
