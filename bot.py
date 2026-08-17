@@ -1,9 +1,9 @@
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-import json
 import os
 import threading
 import time
 from datetime import datetime
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
 import numpy as np
 import pandas as pd
 import pytz
@@ -13,7 +13,6 @@ import yfinance as yf
 # Cloud Environment Variables
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
 
 
@@ -209,56 +208,52 @@ def send_market_close_summary():
     print("Failed to generate market summary:", e)
 
 
-# --- GROQ AI ENGINE ---
-def query_groq_ai(user_question, market_context):
-  api_key = (os.environ.get("GROQ_API_KEY") or "").strip()
-
-  if not api_key:
-    return "⚠️ Error: GROQ_API_KEY is not set in Render Environment variables."
-
-  url = "https://api.groq.com/openai/v1/chat/completions"
-  headers = {
-      "Authorization": f"Bearer {api_key}",
-      "Content-Type": "application/json",
-  }
+# --- 100% UNRESTRICTED ZERO-KEY AI ENGINE (POLLINATIONS) ---
+def query_unrestricted_ai(user_question, market_context):
+  url = "https://text.pollinations.ai/"
 
   system_prompt = (
-      "You are the Partha Algo Edge VIP AI Analyst. Provide precise, professional, "
-      "and sharp trading insights for Indian indices (NIFTY 50, BANKNIFTY) based on 5/39 EMA, "
-      "ATR trailing stops, and 8-tick breakout levels. Format responses with clean bullet points."
+      "You are the Partha Algo Edge VIP AI Analyst. Provide sharp, professional, "
+      "and precise trading insights for Indian market indices (NIFTY 50, BANKNIFTY). "
+      "Reference 5/39 EMA, ATR trailing stops, and 8-tick breakout levels. Format using clean bullet points."
   )
 
-  payload = {
-      "model": "llama-3.3-70b-versatile",
-      "messages": [
-          {"role": "system", "content": system_prompt},
-          {
-              "role": "user",
-              "content": (
-                  f"LIVE MARKET CONTEXT:\n{market_context}\n\nUSER QUESTION:"
-                  f" {user_question}"
-              ),
-          },
-      ],
-      "temperature": 0.3,
-  }
+  full_prompt = (
+      f"{system_prompt}\n\n"
+      f"LIVE MARKET CONTEXT:\n{market_context}\n\n"
+      f"USER QUESTION: {user_question}\n\n"
+      f"ANALYSIS:"
+  )
 
   try:
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
-    data = response.json()
-    if response.status_code == 200 and "choices" in data:
-      return data["choices"][0]["message"]["content"]
+    response = requests.post(
+        url,
+        json={
+            "messages": [{"role": "user", "content": full_prompt}],
+            "model": "openai",
+            "seed": 42,
+        },
+        timeout=25,
+    )
+
+    if response.status_code == 200:
+      return response.text.strip()
     else:
-      return f"⚠️ Groq Error ({response.status_code}): {response.text[:140]}"
+      # Fallback to direct GET query
+      fallback_res = requests.get(
+          f"https://text.pollinations.ai/{requests.utils.quote(full_prompt)}",
+          timeout=25,
+      )
+      return fallback_res.text.strip()
   except Exception as e:
-    return f"⚠️ Request Error: {str(e)}"
+    return f"⚠️ Engine Connection Notice: {str(e)}"
 
 
-# --- TELEGRAM COMMAND LISTENER (DMs & CHANNELS) ---
+# --- TELEGRAM LISTENER ---
 def telegram_listener():
   offset = None
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-  print("Telegram Groq AI listener active...")
+  print("Unrestricted Telegram AI Listener active...")
 
   while True:
     try:
@@ -280,7 +275,6 @@ def telegram_listener():
           user_msg = msg_obj["text"].strip()
           sender_id = msg_obj["chat"]["id"]
 
-          # Supports /ask_bot, ask_bot, and /start
           if (
               user_msg.startswith("/ask_bot")
               or user_msg.startswith("ask_bot")
@@ -295,7 +289,7 @@ def telegram_listener():
 
             if not query:
               send_telegram_message(
-                  "👋 *Partha Algo AI Ready (Powered by Groq Llama 3.3)*\n"
+                  "👋 *Partha Algo AI Ready (Unrestricted AI Engine)*\n"
                   "Ask any market query, trend question, or level analysis.\n\n"
                   "Example: `/ask_bot what is the current trend of NIFTY?`",
                   target_chat_id=sender_id,
@@ -320,8 +314,8 @@ def telegram_listener():
                   "NIFTY 50 live data currently offline / outside session hours."
               )
 
-            ai_response = query_groq_ai(query, market_snapshot)
-            formatted_reply = f"🤖 *PARTHA AI INTEL (GROQ)*\n━━━━━━━━━━━━━━━━━━━\n{ai_response}"
+            ai_response = query_unrestricted_ai(query, market_snapshot)
+            formatted_reply = f"🤖 *PARTHA AI INTEL*\n━━━━━━━━━━━━━━━━━━━\n{ai_response}"
             send_telegram_message(formatted_reply, target_chat_id=sender_id)
 
     except Exception as e:
