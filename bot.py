@@ -104,9 +104,6 @@ def calculate_partha_signals(df):
     return df
 
 if __name__ == "__main__":
-    print("Testing Telegram Connection...")
-    send_telegram_message("🧪 *PARTHA BOT TEST: SYSTEM OPERATIONAL*\nCloud runner connected and sending alerts successfully.")
-
     print("Running single market scan...")
     live_data = fetch_nifty_data()
     processed_data = calculate_partha_signals(live_data)
