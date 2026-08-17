@@ -208,7 +208,7 @@ def send_market_close_summary():
     print("Failed to generate market summary:", e)
 
 
-# --- 100% UNRESTRICTED ZERO-KEY AI ENGINE (POLLINATIONS) ---
+# --- 100% UNRESTRICTED ZERO-KEY AI ENGINE ---
 def query_unrestricted_ai(user_question, market_context):
   url = "https://text.pollinations.ai/"
 
@@ -239,14 +239,13 @@ def query_unrestricted_ai(user_question, market_context):
     if response.status_code == 200:
       return response.text.strip()
     else:
-      # Fallback to direct GET query
       fallback_res = requests.get(
           f"https://text.pollinations.ai/{requests.utils.quote(full_prompt)}",
           timeout=25,
       )
       return fallback_res.text.strip()
   except Exception as e:
-    return f"⚠️ Engine Connection Notice: {str(e)}"
+    return f"⚠️ AI Engine Notice: {str(e)}"
 
 
 # --- TELEGRAM LISTENER ---
@@ -289,7 +288,7 @@ def telegram_listener():
 
             if not query:
               send_telegram_message(
-                  "👋 *Partha Algo AI Ready (Unrestricted AI Engine)*\n"
+                  "👋 *Partha Algo AI Ready (Pure AI Engine)*\n"
                   "Ask any market query, trend question, or level analysis.\n\n"
                   "Example: `/ask_bot what is the current trend of NIFTY?`",
                   target_chat_id=sender_id,
