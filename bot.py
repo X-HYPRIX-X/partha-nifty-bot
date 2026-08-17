@@ -1,9 +1,9 @@
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-import json
 import os
 import threading
 import time
 from datetime import datetime
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
 import numpy as np
 import pandas as pd
 import pytz
@@ -16,6 +16,7 @@ CHAT_ID = os.environ.get("CHAT_ID")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
 
+
 def send_telegram_message(msg, target_chat_id=None):
   cid = target_chat_id if target_chat_id else CHAT_ID
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -26,6 +27,7 @@ def send_telegram_message(msg, target_chat_id=None):
     print("Telegram send error:", e)
 
 
+# --- DATA & PARTHA SIGNAL ENGINE ---
 def fetch_index_data(ticker_symbol):
   df = yf.Ticker(ticker_symbol).history(period="5d", interval="5m")
   df.dropna(inplace=True)
@@ -161,12 +163,64 @@ def execute_scan():
       print(f"Error scanning {name}:", e)
 
 
+def send_market_close_summary():
+  try:
+    live_data = fetch_index_data("^NSEI")
+    processed_data = calculate_partha_signals(live_data)
+    ist = pytz.timezone("Asia/Kolkata")
+    today_date = datetime.now(ist).date()
+    today_data = processed_data[processed_data.index.date == today_date]
+
+    if today_data.empty:
+      today_data = processed_data.tail(75)
+
+    day_open = today_data.iloc[0]["Open"]
+    day_high = today_data["High"].max()
+    day_low = today_data["Low"].min()
+    day_close = today_data.iloc[-1]["Close"]
+
+    net_points = day_close - day_open
+    pct_change = (net_points / day_open) * 100
+    arrow = "📈" if net_points >= 0 else "📉"
+    final_trend = (
+        "BULLISH"
+        if today_data.iloc[-1]["Position"] == 1
+        else "BEARISH"
+        if today_data.iloc[-1]["Position"] == -1
+        else "NEUTRAL"
+    )
+
+    summary_msg = (
+        f"🏁 *DAILY MARKET CLOSE SUMMARY - NIFTY 50*\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"{arrow} *Closing Price:* `{day_close:.2f}` ({net_points:+.2f} /"
+        f" {pct_change:+.2f}%)\n"
+        f"• *Open:* `{day_open:.2f}`\n"
+        f"• *Day High:* `{day_high:.2f}`\n"
+        f"• *Day Low:* `{day_low:.2f}`\n"
+        f"• *Total Range:* `{day_high - day_low:.2f}` pts\n"
+        f"• *Final Algo Position:* *{final_trend}*\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"Market closed. Automated engine standing by until 09:15 AM tomorrow."
+    )
+    send_telegram_message(summary_msg)
+    print("Market close summary sent.")
+  except Exception as e:
+    print("Failed to generate market summary:", e)
+
+
+# --- OPENROUTER AI ENGINE ---
 def query_openrouter_ai(user_question, market_context):
+  api_key = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+
+  if not api_key:
+    return "⚠️ Error: OPENROUTER_API_KEY is missing from Render environment variables."
+
   url = "https://openrouter.ai/api/v1/chat/completions"
   headers = {
-      "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+      "Authorization": f"Bearer {api_key}",
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://render.com",
+      "HTTP-Referer": "https://partha-nifty-bot.onrender.com",
       "X-Title": "Partha Algo VIP Bot",
   }
 
@@ -177,35 +231,38 @@ def query_openrouter_ai(user_question, market_context):
       "and emphasize strict risk management. Keep responses concise and formatted with bullet points."
   )
 
-  prompt = (
-      f"LIVE MARKET CONTEXT:\n{market_context}\n\nUSER QUESTION: {user_question}"
-  )
-
   payload = {
       "model": "openai/gpt-oss-20b:free",
       "messages": [
           {"role": "system", "content": system_prompt},
-          {"role": "user", "content": prompt},
+          {
+              "role": "user",
+              "content": (
+                  f"MARKET CONTEXT:\n{market_context}\n\nQUESTION:"
+                  f" {user_question}"
+              ),
+          },
       ],
   }
 
   try:
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
-    if response.status_code == 200:
-      return response.json()["choices"][0]["message"]["content"]
+    response = requests.post(url, headers=headers, json=payload, timeout=25)
+    data = response.json()
+    if response.status_code == 200 and "choices" in data:
+      return data["choices"][0]["message"]["content"]
     else:
       return (
-          f"⚠️ AI Engine Error ({response.status_code}): {response.text[:120]}"
+          f"⚠️ AI Engine Error ({response.status_code}): {response.text[:140]}"
       )
   except Exception as e:
-    return f"⚠️ Connection Error: {str(e)}"
+    return f"⚠️ Request Error: {str(e)}"
 
 
-# Handles both private DMs and channel posts
+# --- COMMAND LISTENER (DMs & CHANNELS) ---
 def telegram_listener():
   offset = None
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-  print("Telegram command & channel update listener active...")
+  print("Telegram listener initialized...")
 
   while True:
     try:
@@ -219,9 +276,8 @@ def telegram_listener():
       if "result" in res:
         for update in res["result"]:
           offset = update["update_id"] + 1
-
-          # Intercept private message OR channel broadcast
           msg_obj = update.get("message") or update.get("channel_post")
+
           if not msg_obj or "text" not in msg_obj:
             continue
 
@@ -235,14 +291,13 @@ def telegram_listener():
 
             if not query:
               send_telegram_message(
-                  "👋 *Partha Algo AI Engine Active*\n"
-                  "Ask any question regarding market trends, levels, or indicator concepts.\n\n"
-                  "Example: `/ask_bot what is the current trend and setup for NIFTY?`",
+                  "👋 *Partha Algo AI Ready!*\n"
+                  "Ask any market query or technical setup question.\n\n"
+                  "Example: `/ask_bot what is the current trend of NIFTY?`",
                   target_chat_id=sender_id,
               )
               continue
 
-            # Fetch live market snapshot for prompt grounding
             try:
               df = calculate_partha_signals(fetch_index_data("^NSEI"))
               latest = df.iloc[-1]
@@ -269,19 +324,31 @@ def telegram_listener():
       time.sleep(2)
 
 
+# --- 24/7 BACKGROUND WORKER LOOP ---
 def algo_loop():
   ist = pytz.timezone("Asia/Kolkata")
+  summary_sent_today = False
+
   while True:
     now = datetime.now(ist)
-    if (
-        now.weekday() < 5
-        and now.replace(hour=9, minute=15)
-        <= now
-        <= now.replace(hour=15, minute=30)
-    ):
-      execute_scan()
+    is_weekday = now.weekday() < 5
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    if now.hour == 8:
+      summary_sent_today = False
+
+    if is_weekday and (market_open <= now <= market_close):
+      print(f"[SCAN] Running at {now.strftime('%I:%M:%S %p')} IST")
+      try:
+        execute_scan()
+      except Exception as e:
+        print("Scan error:", e)
       time.sleep(300)
     else:
+      if is_weekday and now >= market_close and not summary_sent_today:
+        send_market_close_summary()
+        summary_sent_today = True
       time.sleep(60)
 
 
