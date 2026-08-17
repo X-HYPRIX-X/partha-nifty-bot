@@ -1,9 +1,9 @@
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import json
 import os
 import threading
 import time
 from datetime import datetime
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-import json
 import numpy as np
 import pandas as pd
 import pytz
@@ -208,51 +208,61 @@ def send_market_close_summary():
     print("Failed to generate market summary:", e)
 
 
-# --- 100% UNRESTRICTED ZERO-KEY AI ENGINE ---
-def query_unrestricted_ai(user_question, market_context):
-  url = "https://text.pollinations.ai/"
-
-  system_prompt = (
-      "You are the Partha Algo Edge VIP AI Analyst. Provide sharp, professional, "
-      "and precise trading insights for Indian market indices (NIFTY 50, BANKNIFTY). "
-      "Reference 5/39 EMA, ATR trailing stops, and 8-tick breakout levels. Format using clean bullet points."
-  )
-
-  full_prompt = (
-      f"{system_prompt}\n\n"
-      f"LIVE MARKET CONTEXT:\n{market_context}\n\n"
-      f"USER QUESTION: {user_question}\n\n"
-      f"ANALYSIS:"
-  )
+# --- NATIVE IN-MEMORY AI ANALYST (ZERO EXTERNAL KEYS NEEDED) ---
+def generate_market_intelligence(user_query):
+  ticker = "^NSEBANK" if "bank" in user_query.lower() else "^NSEI"
+  asset_name = "BANKNIFTY" if ticker == "^NSEBANK" else "NIFTY 50"
+  strike_step = 100 if ticker == "^NSEBANK" else 50
 
   try:
-    response = requests.post(
-        url,
-        json={
-            "messages": [{"role": "user", "content": full_prompt}],
-            "model": "openai",
-            "seed": 42,
-        },
-        timeout=25,
+    df = calculate_partha_signals(fetch_index_data(ticker))
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    trend = "BULLISH 🟢" if latest["Position"] == 1 else "BEARISH 🔴"
+    sl = (
+        latest["Long_Stop"]
+        if latest["Position"] == 1
+        else latest["Short_Stop"]
+    )
+    ema_bias = (
+        "Bullish Alignment (5 EMA > 39 EMA)"
+        if latest["EMA_5"] > latest["EMA_39"]
+        else "Bearish Alignment (5 EMA < 39 EMA)"
+    )
+    atm_strike = int(round(latest["Close"] / strike_step) * strike_step)
+    target = (
+        latest["Close"] + abs(latest["Close"] - sl) * 1.5
+        if latest["Position"] == 1
+        else latest["Close"] - abs(latest["Close"] - sl) * 1.5
     )
 
-    if response.status_code == 200:
-      return response.text.strip()
-    else:
-      fallback_res = requests.get(
-          f"https://text.pollinations.ai/{requests.utils.quote(full_prompt)}",
-          timeout=25,
-      )
-      return fallback_res.text.strip()
+    return (
+        f"🤖 *PARTHA AI INTEL REPORT*\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 *Asset:* `{asset_name}`\n"
+        f"💵 *Live Spot Price:* `{latest['Close']:.2f}`\n"
+        f"📈 *Algo State:* *{trend}*\n\n"
+        f"🔍 *Technical Breakdown:*\n"
+        f"• *EMA Bias:* {ema_bias}\n"
+        f"• *Dynamic Trailing SL:* `{sl:.2f}`\n"
+        f"• *Computed Target (1:1.5):* `{target:.2f}`\n"
+        f"• *Suggested ATM Strike:* `{atm_strike} {'CE' if latest['Position']==1 else 'PE'}`\n\n"
+        f"💡 *Algo Strategy Insight:*\n"
+        f"Partha Algo executes strictly when the 8-tick breakout confirms with dynamic ATR support. Maintain strict risk management per trade."
+    )
   except Exception as e:
-    return f"⚠️ AI Engine Notice: {str(e)}"
+    return (
+        f"🤖 *PARTHA AI INTEL*\n━━━━━━━━━━━━━━━━━━━\n⚠️ Market data currently"
+        f" unavailable: {str(e)}"
+    )
 
 
 # --- TELEGRAM LISTENER ---
 def telegram_listener():
   offset = None
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-  print("Unrestricted Telegram AI Listener active...")
+  print("Native Telegram AI Listener active...")
 
   while True:
     try:
@@ -288,34 +298,17 @@ def telegram_listener():
 
             if not query:
               send_telegram_message(
-                  "👋 *Partha Algo AI Ready (Pure AI Engine)*\n"
+                  "👋 *Partha Algo AI Engine Online*\n"
                   "Ask any market query, trend question, or level analysis.\n\n"
-                  "Example: `/ask_bot what is the current trend of NIFTY?`",
+                  "Examples:\n"
+                  "• `/ask_bot what is the current trend of NIFTY?`\n"
+                  "• `/ask_bot analyze BANKNIFTY levels`",
                   target_chat_id=sender_id,
               )
               continue
 
-            try:
-              df = calculate_partha_signals(fetch_index_data("^NSEI"))
-              latest = df.iloc[-1]
-              trend = "BULLISH" if latest["Position"] == 1 else "BEARISH"
-              sl = (
-                  latest["Long_Stop"]
-                  if trend == "BULLISH"
-                  else latest["Short_Stop"]
-              )
-              market_snapshot = (
-                  f"NIFTY 50 Spot: {latest['Close']:.2f} | Trend: {trend} | "
-                  f"5 EMA: {latest['EMA_5']:.2f} | 39 EMA: {latest['EMA_39']:.2f} | Trailing SL: {sl:.2f}"
-              )
-            except Exception:
-              market_snapshot = (
-                  "NIFTY 50 live data currently offline / outside session hours."
-              )
-
-            ai_response = query_unrestricted_ai(query, market_snapshot)
-            formatted_reply = f"🤖 *PARTHA AI INTEL*\n━━━━━━━━━━━━━━━━━━━\n{ai_response}"
-            send_telegram_message(formatted_reply, target_chat_id=sender_id)
+            analysis_reply = generate_market_intelligence(query)
+            send_telegram_message(analysis_reply, target_chat_id=sender_id)
 
     except Exception as e:
       time.sleep(2)
