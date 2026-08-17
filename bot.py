@@ -1,15 +1,14 @@
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 import os
 import threading
 import time
 from datetime import datetime
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 import numpy as np
 import pandas as pd
 import pytz
 import requests
 import yfinance as yf
 
-# Environment variables pulled from Render
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 PORT = int(os.environ.get("PORT", 8080))
@@ -19,7 +18,7 @@ def send_telegram_message(msg):
   url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
   payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
   try:
-    response = requests.post(url, json=payload)
+    response = requests.post(url, json=payload, timeout=10)
     print("Telegram status:", response.status_code)
   except Exception as e:
     print("Telegram error:", e)
@@ -185,6 +184,12 @@ def algo_loop():
   ist = pytz.timezone("Asia/Kolkata")
   print("Market scanning loop started...")
 
+  # Instant ping upon cloud boot
+  send_telegram_message(
+      "🚀 *RENDER CLOUD WORKER LIVE*\nPartha Algo engine connected and"
+      " scanning active."
+  )
+
   while True:
     now = datetime.now(ist)
     is_weekday = now.weekday() < 5
@@ -199,15 +204,17 @@ def algo_loop():
         print("Scan error:", e)
       time.sleep(300)
     else:
+      print(
+          f"[STANDBY] Outside market hours ({now.strftime('%I:%M:%S %p')})."
+          " Waiting 60s..."
+      )
       time.sleep(60)
 
 
 if __name__ == "__main__":
-  # Start the background trading loop
   trading_thread = threading.Thread(target=algo_loop, daemon=True)
   trading_thread.start()
 
-  # Serve HTTP so Render recognizes the service as live
   server = HTTPServer(("0.0.0.0", PORT), SimpleHTTPRequestHandler)
   print(f"Web server running on port {PORT}...")
   server.serve_forever()
