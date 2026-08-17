@@ -12,7 +12,8 @@ def send_telegram_message(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload)
+        response = requests.post(url, json=payload)
+        print("Telegram status:", response.status_code)
     except Exception as e:
         print("Telegram error:", e)
 
@@ -103,6 +104,9 @@ def calculate_partha_signals(df):
     return df
 
 if __name__ == "__main__":
+    print("Testing Telegram Connection...")
+    send_telegram_message("🧪 *PARTHA BOT TEST: SYSTEM OPERATIONAL*\nCloud runner connected and sending alerts successfully.")
+
     print("Running single market scan...")
     live_data = fetch_nifty_data()
     processed_data = calculate_partha_signals(live_data)
@@ -123,4 +127,4 @@ if __name__ == "__main__":
         msg = f"⚠️ *EMA BEARISH CROSS (5/39)*\nTicker: NIFTY 50\nPrice: {latest['Close']:.2f}"
         send_telegram_message(msg)
     else:
-        print("No active signals.")
+        print("No active market signals.")
