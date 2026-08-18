@@ -15,6 +15,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 PORT = int(os.environ.get("PORT", 8080))
 
+# Cache to prevent duplicate alerts on the same 5-minute candle
+last_processed_candles = {"^NSEI": None, "^NSEBANK": None}
+
 
 def send_telegram_message(msg, target_chat_id=None):
   cid = target_chat_id if target_chat_id else CHAT_ID
@@ -111,33 +114,24 @@ def calculate_partha_signals(df):
 
 
 def execute_scan():
+  global last_processed_candles
   for symbol, name, strike_step in [
       ("^NSEI", "NIFTY 50", 50),
       ("^NSEBANK", "BANKNIFTY", 100),
   ]:
     try:
       df = calculate_partha_signals(fetch_index_data(symbol))
-      latest, prev = df.iloc[-1], df.iloc[-2]
-      price_diff = latest["Close"] - prev["Close"]
-      direction = "▲" if price_diff >= 0 else "▼"
-      trend = (
-          "BULLISH (LONG)"
-          if latest["Position"] == 1
-          else "BEARISH (SHORT)"
-          if latest["Position"] == -1
-          else "NEUTRAL"
-      )
+      latest = df.iloc[-1]
+      latest_candle_time = df.index[-1]
+
+      # Prevent duplicate scans on the exact same 5-minute bar
+      if last_processed_candles[symbol] == latest_candle_time:
+        continue
+      last_processed_candles[symbol] = latest_candle_time
 
       atm_strike = int(round(latest["Close"] / strike_step) * strike_step)
 
-      msg = (
-          f"📊 *MOVEMENT DETECTED - {name}*\n"
-          f"Price: `{latest['Close']:.2f}` ({direction} {abs(price_diff):.2f})\n"
-          f"High: `{latest['High']:.2f}` | Low: `{latest['Low']:.2f}`\n"
-          f"Algo Trend: *{trend}*"
-      )
-      send_telegram_message(msg)
-
+      # Only send alerts on active VIP Buy / Sell signals to prevent spam
       if latest["Buy_Signal"]:
         tgt1 = latest["Close"] + ((latest["Close"] - latest["Long_Stop"]) * 1.5)
         send_telegram_message(
@@ -208,7 +202,7 @@ def send_market_close_summary():
     print("Failed to generate market summary:", e)
 
 
-# --- NATIVE IN-MEMORY AI ANALYST (ZERO EXTERNAL KEYS NEEDED) ---
+# --- NATIVE IN-MEMORY AI ANALYST ---
 def generate_market_intelligence(user_query):
   ticker = "^NSEBANK" if "bank" in user_query.lower() else "^NSEI"
   asset_name = "BANKNIFTY" if ticker == "^NSEBANK" else "NIFTY 50"
@@ -217,7 +211,6 @@ def generate_market_intelligence(user_query):
   try:
     df = calculate_partha_signals(fetch_index_data(ticker))
     latest = df.iloc[-1]
-    prev = df.iloc[-2]
 
     trend = "BULLISH 🟢" if latest["Position"] == 1 else "BEARISH 🔴"
     sl = (
@@ -249,7 +242,7 @@ def generate_market_intelligence(user_query):
         f"• *Computed Target (1:1.5):* `{target:.2f}`\n"
         f"• *Suggested ATM Strike:* `{atm_strike} {'CE' if latest['Position']==1 else 'PE'}`\n\n"
         f"💡 *Algo Strategy Insight:*\n"
-        f"Partha Algo executes strictly when the 8-tick breakout confirms with dynamic ATR support. Maintain strict risk management per trade."
+        f"Partha Algo executes strictly on 8-tick breakout confirmation with dynamic ATR support."
     )
   except Exception as e:
     return (
@@ -329,12 +322,11 @@ def algo_loop():
       summary_sent_today = False
 
     if is_weekday and (market_open <= now <= market_close):
-      print(f"[SCAN] Running at {now.strftime('%I:%M:%S %p')} IST")
       try:
         execute_scan()
       except Exception as e:
         print("Scan error:", e)
-      time.sleep(300)
+      time.sleep(300)  # Clean 5-minute interval
     else:
       if is_weekday and now >= market_close and not summary_sent_today:
         send_market_close_summary()
